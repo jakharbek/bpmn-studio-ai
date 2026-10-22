@@ -68,9 +68,13 @@
     </div>
     <div id="log"></div>
     <form id="form">
-      <div class="ctx-chip" id="ctx-chip"></div>
+      <div class="ctx-bar">
+        <span class="ctx-chip" id="ctx-chip"></span>
+        <div class="ref-list" id="ctx-refs" aria-label="Элементы схемы в контексте сообщения"></div>
+      </div>
       <div class="row">
-        <textarea id="input" rows="1" placeholder="Опишите процесс или что изменить…"></textarea>
+        <div class="mention" id="mention" role="listbox" aria-label="Элементы схемы" hidden></div>
+        <textarea id="input" rows="1" placeholder="Опишите процесс или что изменить… @ — сослаться на элемент" aria-autocomplete="list" aria-controls="mention"></textarea>
         <button id="send" type="submit" class="primary" aria-label="Отправить сообщение" title="Отправить (Enter)">➤</button>
         <button id="stop" type="button" hidden>Стоп</button>
       </div>

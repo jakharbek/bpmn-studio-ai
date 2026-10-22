@@ -110,6 +110,7 @@ async function importXml(xml, { keepView, seq }) {
     importing = false;
   }
   if (seq !== openSeq) return false;
+  markedRefs = new Set(); // a fresh import has no markers: the referenced elements get theirs again
   if (view) canvas.viewbox({ x: view.x, y: view.y, width: view.width, height: view.height });
   else canvas.zoom('fit-viewport', 'auto');
   doc.platform = platform;
@@ -850,27 +851,297 @@ const md = text => {
   const d = document.createElement('div'); d.textContent = text; return d.innerHTML.replace(/\n/g, '<br>');
 };
 
+// ---------------------------------------------------------------- referenced elements
+// The elements a message is about: the current selection (follows it, "auto"), plus elements the
+// user pinned or mentioned with @ ("pinned"). Shown as chips above the input, marked on the canvas,
+// described to the model, and kept as chips on the sent message.
+
+const TYPE_LABELS = {
+  startEvent: 'Старт', endEvent: 'Конец', intermediateCatchEvent: 'Событие', intermediateThrowEvent: 'Событие',
+  boundaryEvent: 'Граничное событие', task: 'Задача', userTask: 'Задача пользователя', serviceTask: 'Сервисная задача',
+  scriptTask: 'Скрипт', businessRuleTask: 'Бизнес-правило', sendTask: 'Отправка', receiveTask: 'Получение',
+  manualTask: 'Ручная задача', callActivity: 'Вызов процесса', subProcess: 'Подпроцесс', transaction: 'Транзакция',
+  exclusiveGateway: 'Шлюз XOR', parallelGateway: 'Шлюз AND', inclusiveGateway: 'Шлюз OR', eventBasedGateway: 'Шлюз событий',
+  complexGateway: 'Шлюз', sequenceFlow: 'Поток', messageFlow: 'Поток сообщений', participant: 'Пул', lane: 'Дорожка',
+  textAnnotation: 'Аннотация', dataObjectReference: 'Данные', dataStoreReference: 'Хранилище', group: 'Группа'
+};
+const shortType = el => (el.type || '').replace(/^bpmn:/, '').replace(/^./, c => c.toLowerCase());
+const typeLabel = el => TYPE_LABELS[shortType(el)] || shortType(el);
+const nameOf = el => (el?.businessObject?.name || '').trim();
+const titleOf = el => nameOf(el) || el.id;
+
+const refs = { file: null, auto: [], pinned: [], excluded: new Set() };
+
+/** Elements of the diagram that can be referenced (no labels, no root). */
+function referencable() {
+  if (!modeler) return [];
+  const root = modeler.get('canvas').getRootElement();
+  return modeler.get('elementRegistry').filter(el => el !== root && el.type !== 'label' && el.businessObject && !/^bpmndi:/.test(el.type));
+}
+
 function selectionContext() {
   if (!modeler) return [];
+  const root = modeler.get('canvas').getRootElement();
+  const seen = new Set();
   return modeler.get('selection').get()
-    .filter(el => el.businessObject && el.type !== 'label')
-    .map(el => ({ id: el.id, name: el.businessObject.name || '', type: el.type }));
+    .map(el => (el.type === 'label' ? el.labelTarget : el)) // a selected label means its element
+    .filter(el => el && el !== root && el.businessObject && !seen.has(el.id) && seen.add(el.id))
+    .map(el => el.id);
+}
+
+/** Ids attached to the next message, in order: pinned / mentioned first, then the live selection. */
+function attachedIds() {
+  const reg = modeler?.get('elementRegistry');
+  if (!reg) return [];
+  const ids = [...refs.pinned, ...refs.auto.filter(id => !refs.pinned.includes(id) && !refs.excluded.has(id))];
+  return ids.filter(id => reg.get(id));
+}
+
+function pinRef(id) {
+  if (!refs.pinned.includes(id)) refs.pinned.push(id);
+  refs.excluded.delete(id);
+  renderRefs();
+}
+
+function unref(id) {
+  refs.pinned = refs.pinned.filter(x => x !== id);
+  if (refs.auto.includes(id)) refs.excluded.add(id);
+  renderRefs();
+}
+
+let markedRefs = new Set();
+/** Dashed outline on the canvas for everything in the context. */
+function markRefsOnCanvas(ids) {
+  if (!modeler) return;
+  const canvas = modeler.get('canvas'), reg = modeler.get('elementRegistry');
+  const next = new Set(ids);
+  for (const id of markedRefs) if (!next.has(id) && reg.get(id)) canvas.removeMarker(id, 'ctx-ref');
+  for (const id of next) if (!markedRefs.has(id)) canvas.addMarker(id, 'ctx-ref');
+  markedRefs = next;
+}
+
+function hoverRef(id, on) {
+  const el = modeler?.get('elementRegistry').get(id);
+  if (!el) return;
+  modeler.get('canvas')[on ? 'addMarker' : 'removeMarker'](el, 'ctx-hover');
+}
+
+/** A chip for an element. editable: × and 📌 (above the input); otherwise it only points (sent messages). */
+function refChip({ id, type, name, file }, { editable = false, pinned = false } = {}) {
+  const chip = document.createElement('span');
+  chip.className = `ref${pinned ? ' pinned' : ''}`;
+  const t = document.createElement('span'); t.className = 'ref-type'; t.textContent = type;
+  const n = document.createElement('span'); n.className = 'ref-name'; n.textContent = name || id;
+  n.title = `${name ? `${name} · ` : ''}${id} — показать на схеме`;
+  n.tabIndex = 0;
+  const show = async () => {
+    try {
+      if (file && file !== doc.file) await openFile(file);
+      if (!modeler.get('elementRegistry').get(id)) return toast(`Элемента ${id} больше нет на схеме`, 'err');
+      focusElement(id);
+    } catch (err) { toast(err.message, 'err'); }
+  };
+  n.onclick = show;
+  n.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); show(); } };
+  chip.onmouseenter = () => (!file || file === doc.file) && hoverRef(id, true);
+  chip.onmouseleave = () => hoverRef(id, false);
+  chip.append(t, n);
+  if (editable) {
+    const pin = document.createElement('button');
+    pin.type = 'button'; pin.className = 'ref-pin'; pin.textContent = '📌';
+    pin.title = pinned ? 'Закреплено: останется в контексте при смене выделения' : 'Закрепить: оставить в контексте при смене выделения';
+    pin.setAttribute('aria-pressed', String(pinned));
+    pin.onclick = () => { if (pinned) { refs.pinned = refs.pinned.filter(x => x !== id); renderRefs(); } else pinRef(id); };
+    const x = document.createElement('button');
+    x.type = 'button'; x.className = 'ref-x'; x.textContent = '×';
+    x.title = 'Убрать из контекста'; x.setAttribute('aria-label', `Убрать ${name || id} из контекста`);
+    x.onclick = () => { hoverRef(id, false); unref(id); input.focus(); };
+    chip.append(pin, x);
+  }
+  return chip;
+}
+
+function renderRefs() {
+  const box = $('ctx-refs');
+  box.innerHTML = '';
+  const reg = modeler?.get('elementRegistry');
+  const ids = attachedIds();
+  for (const id of ids) {
+    const el = reg.get(id);
+    box.appendChild(refChip({ id, type: typeLabel(el), name: nameOf(el) }, { editable: true, pinned: refs.pinned.includes(id) }));
+  }
+  markRefsOnCanvas(ids);
 }
 
 function updateContextChip() {
-  const sel = selectionContext();
-  const parts = [];
-  if (doc.file) parts.push(`📄 ${doc.file}`);
-  if (sel.length) parts.push(`выделено: ${sel.map(s => s.name || s.id).join(', ')}`);
-  $('ctx-chip').textContent = parts.join(' · ');
+  // another diagram: what was pinned belonged to the previous one
+  if (refs.file !== doc.file) { refs.file = doc.file; refs.pinned = []; refs.excluded.clear(); markedRefs = new Set(); }
+  const auto = selectionContext();
+  if (auto.join() !== refs.auto.join()) { refs.auto = auto; refs.excluded.clear(); }
+  $('ctx-chip').textContent = doc.file ? `📄 ${doc.file}` : '';
+  renderRefs();
 }
 
-function contextBlock(selection) {
+/** What the model gets about one element: enough to act on it without reading the whole diagram first. */
+function describeElement(el) {
+  const reg = modeler.get('elementRegistry');
+  const bo = el.businessObject;
+  const label = x => (x ? `${x.id}${nameOf(x) ? ` «${nameOf(x)}»` : ''}` : '?');
+  const parts = [`${label(el)} (${shortType(el)})`];
+  if (el.waypoints) {
+    parts.push(`${label(el.source)} → ${label(el.target)}`);
+    const cond = bo.conditionExpression?.body;
+    if (cond) parts.push(`condition ${cond}`);
+    if (el.source?.businessObject?.default === bo) parts.push('default flow');
+  } else {
+    const lane = reg.filter(l => l.type === 'bpmn:Lane').find(l => (l.businessObject.flowNodeRef || []).includes(bo));
+    if (lane) parts.push(`lane ${label(lane)}`);
+    if (el.parent && /SubProcess|Transaction/.test(el.parent.type)) parts.push(`inside ${label(el.parent)}`);
+    if (el.host) parts.push(`attached to ${label(el.host)}`);
+    const into = (el.incoming || []).filter(c => c.type === 'bpmn:SequenceFlow').map(c => label(c.source));
+    const out = (el.outgoing || []).filter(c => c.type === 'bpmn:SequenceFlow').map(c => label(c.target));
+    if (into.length) parts.push(`from ${into.join(', ')}`);
+    if (out.length) parts.push(`to ${out.join(', ')}`);
+    const ed = bo.eventDefinitions?.[0];
+    if (ed) {
+      const kind = ed.$type.replace(/^bpmn:|EventDefinition$/g, '');
+      const timer = ed.timeDuration?.body || ed.timeDate?.body || ed.timeCycle?.body;
+      parts.push(`${kind}${timer ? ` ${timer}` : ''}${ed.messageRef?.name ? ` message ${ed.messageRef.name}` : ''}${ed.errorRef?.errorCode ? ` error ${ed.errorRef.errorCode}` : ''}`);
+    }
+    const attr = k => (bo.get ? bo.get(k) : undefined);
+    const props = [];
+    for (const [k, label2] of [['camunda:assignee', 'assignee'], ['camunda:candidateGroups', 'candidateGroups'], ['camunda:formKey', 'formKey'],
+      ['camunda:topic', 'topic'], ['camunda:class', 'class'], ['camunda:delegateExpression', 'delegateExpression'], ['camunda:expression', 'expression'],
+      ['camunda:decisionRef', 'decisionRef']]) {
+      const v = attr(k);
+      if (v) props.push(`${label2}=${v}`);
+    }
+    if (bo.calledElement) props.push(`calledElement=${bo.calledElement}`);
+    for (const v of bo.extensionElements?.values || []) {
+      if (v.$type === 'zeebe:TaskDefinition' && v.type) props.push(`jobType=${v.type}`);
+      if (v.$type === 'zeebe:AssignmentDefinition' && v.assignee) props.push(`assignee=${v.assignee}`);
+      if (v.$type === 'zeebe:FormDefinition' && v.formId) props.push(`formId=${v.formId}`);
+      if (v.$type === 'camunda:FormData') props.push(`form fields: ${(v.fields || []).map(f => f.id).join(', ')}`);
+    }
+    if (props.length) parts.push(props.join(', '));
+  }
+  const line = parts.join('; ');
+  return line.length > 500 ? `${line.slice(0, 500)}…` : line;
+}
+
+function contextBlock(ids) {
   const lines = [];
   if (doc.file) lines.push(`Open diagram: ${doc.file}`);
-  if (selection.length) lines.push(`Selected: ${selection.slice(0, 20).map(s => `${s.id}${s.name ? ` «${s.name}»` : ''} (${s.type.replace('bpmn:', '')})`).join(', ')}`);
+  const reg = modeler?.get('elementRegistry');
+  const els = ids.map(id => reg?.get(id)).filter(Boolean);
+  if (els.length) {
+    lines.push(`Referenced elements (${els.length}) — "this", "it", "selected", "these", or @name in the message mean these; use their ids in tool calls:`);
+    for (const el of els.slice(0, 30)) lines.push(`- ${describeElement(el)}`);
+    if (els.length > 30) lines.push(`- … and ${els.length - 30} more: ${els.slice(30).map(e => e.id).join(', ')}`);
+  }
   return lines.length ? `[Editor context]\n${lines.join('\n')}\n\n` : '';
 }
+
+// ---- @-mentions in the input
+
+const mention = { open: false, start: 0, items: [], active: 0 };
+
+function closeMention() {
+  mention.open = false;
+  $('mention').hidden = true;
+  input.removeAttribute('aria-activedescendant');
+}
+
+function updateMention() {
+  if (!modeler || !doc.file) return closeMention();
+  const caret = input.selectionStart;
+  const before = input.value.slice(0, caret);
+  const m = /(^|\s)@([^\s@]*)$/.exec(before);
+  if (!m) return closeMention();
+  const query = m[2].toLowerCase();
+  mention.start = caret - m[2].length - 1;
+  const score = el => {
+    const name = nameOf(el).toLowerCase(), id = el.id.toLowerCase();
+    if (!query) return 1;
+    if (name.startsWith(query) || id.startsWith(query)) return 3;
+    if (name.split(/\s+/).some(w => w.startsWith(query))) return 2;
+    return name.includes(query) || id.includes(query) ? 1 : 0;
+  };
+  mention.items = referencable().map(el => ({ el, s: score(el) })).filter(x => x.s > 0)
+    .sort((a, b) => b.s - a.s || (nameOf(b.el) ? 1 : 0) - (nameOf(a.el) ? 1 : 0) || titleOf(a.el).localeCompare(titleOf(b.el)))
+    .slice(0, 12).map(x => x.el);
+  mention.active = Math.min(mention.active, Math.max(mention.items.length - 1, 0));
+  mention.open = true;
+  renderMention();
+}
+
+function renderMention() {
+  const box = $('mention');
+  box.innerHTML = '';
+  if (!mention.items.length) {
+    const none = document.createElement('div'); none.className = 'none'; none.textContent = 'Нет элементов с таким именем';
+    box.appendChild(none);
+  }
+  mention.items.forEach((el, i) => {
+    const opt = document.createElement('div');
+    opt.className = `opt${i === mention.active ? ' active' : ''}`;
+    opt.id = `mention-${i}`; opt.setAttribute('role', 'option'); opt.setAttribute('aria-selected', String(i === mention.active));
+    opt.innerHTML = '<span class="t"></span><span class="n"></span><span class="i"></span>';
+    opt.querySelector('.t').textContent = typeLabel(el);
+    opt.querySelector('.n').textContent = nameOf(el) || '(без имени)';
+    opt.querySelector('.i').textContent = el.id;
+    opt.onmousedown = e => { e.preventDefault(); pickMention(i); }; // keep the focus in the input
+    opt.onmouseenter = () => hoverRef(el.id, true);
+    opt.onmouseleave = () => hoverRef(el.id, false);
+    box.appendChild(opt);
+  });
+  box.hidden = false;
+  if (mention.items.length) {
+    input.setAttribute('aria-activedescendant', `mention-${mention.active}`);
+    box.querySelector('.opt.active')?.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function pickMention(i) {
+  const el = mention.items[i];
+  if (!el) return;
+  hoverRef(el.id, false);
+  const caret = input.selectionStart;
+  const text = `@${titleOf(el)} `;
+  input.value = input.value.slice(0, mention.start) + text + input.value.slice(caret);
+  const pos = mention.start + text.length;
+  input.setSelectionRange(pos, pos);
+  closeMention();
+  pinRef(el.id);
+  autosize();
+}
+
+input.addEventListener('input', updateMention);
+input.addEventListener('click', updateMention);
+input.addEventListener('blur', () => setTimeout(closeMention, 120));
+input.addEventListener('keydown', e => {
+  if (!mention.open) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const n = mention.items.length;
+    if (n) mention.active = (mention.active + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+    renderMention();
+  } else if ((e.key === 'Enter' || e.key === 'Tab') && mention.items.length) {
+    e.preventDefault(); e.stopImmediatePropagation();
+    pickMention(mention.active);
+  } else if (e.key === 'Escape') {
+    e.preventDefault(); closeMention();
+  }
+}, true);
+
+// Ctrl+K: to the chat, with whatever is selected on the diagram
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    updateContextChip();
+    input.focus();
+  }
+});
 
 function renderEmpty() {
   log.innerHTML = '';
@@ -891,6 +1162,11 @@ function userBubble(m) {
   const d = document.createElement('div');
   d.className = 'msg user';
   if (m.ctx) { const c = document.createElement('span'); c.className = 'ctx'; c.textContent = m.ctx; d.appendChild(c); }
+  if (m.refs?.length) {
+    const box = document.createElement('div'); box.className = 'refs';
+    for (const r of m.refs) box.appendChild(refChip(r));
+    d.appendChild(box);
+  }
   d.appendChild(document.createTextNode(m.text));
   log.appendChild(d);
 }
@@ -1017,11 +1293,18 @@ async function send(text) {
     return openSettings('Сначала выберите, через что работает ассистент.');
   }
   await flushSave(); // the assistant must see what is on the screen
-  const selection = selectionContext();
-  const ctxLabel = [doc.file, selection.length ? `выделено: ${selection.map(s => s.name || s.id).join(', ')}` : ''].filter(Boolean).join(' · ');
+  updateContextChip();
+  const refIds = attachedIds();
+  const reg = modeler?.get('elementRegistry');
+  const msgRefs = refIds.map(id => reg.get(id)).map(el => ({ id: el.id, type: typeLabel(el), name: nameOf(el), file: doc.file }));
+  const ctxLabel = doc.file || '';
+  const context = contextBlock(refIds);
+  // pinned and mentioned elements belonged to this message; the selection keeps following the diagram
+  refs.pinned = []; refs.excluded.clear();
+  renderRefs();
 
   if (!chat.messages.length) log.innerHTML = '';
-  const um = { role: 'user', text, ctx: ctxLabel };
+  const um = { role: 'user', text, ctx: ctxLabel, refs: msgRefs };
   chat.messages.push(um); userBubble(um);
   const started = Date.now();
   const msg = { role: 'assistant', parts: [], live: { phase: 'waiting', started, lastEvent: started, step: 0 } };
@@ -1057,7 +1340,7 @@ async function send(text) {
   try {
     await Core.runAssistant({
       settings, history: chat.history, studio: studio.assistantStudio, signal: controller.signal,
-      text: contextBlock(selection) + text,
+      text: context + text,
       confirm: async call => {
         const url = Object.hasOwn(config.deploy.targets, call.args?.target) ? config.deploy.targets[call.args.target] : 'неизвестный сервер';
         const forced = call.args?.force ? '\n\n⚠ Принудительно: схема будет отправлена, даже если в ней есть ошибки деплоя.' : '';

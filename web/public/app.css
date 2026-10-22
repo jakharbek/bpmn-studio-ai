@@ -112,8 +112,38 @@ header .spacer { flex: 1; }
 .empty .examples { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
 .empty .examples button { text-align: left; white-space: normal; font-size: 13px; }
 .chat form { padding: 10px 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.ctx-bar { display: flex; flex-direction: column; gap: 5px; }
 .ctx-chip { font-size: 12px; color: var(--muted); min-height: 1em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat .row { display: flex; gap: 6px; align-items: flex-end; }
+.chat .row { display: flex; gap: 6px; align-items: flex-end; position: relative; }
+
+/* elements of the diagram referenced by a message: chips above the input and in sent messages */
+.ref-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.ref-list:empty { display: none; }
+.ref { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 4px 2px 8px; border-radius: 14px; font-size: 12px;
+  background: var(--chip); border: 1px dashed var(--muted); color: var(--text); }
+.ref.pinned { border-style: solid; border-color: var(--accent); }
+.ref .ref-type { color: var(--muted); flex: none; }
+.ref .ref-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 210px; cursor: pointer; }
+.ref .ref-name:hover { text-decoration: underline; }
+.ref button { border: 0; background: none; padding: 0 3px; height: auto; line-height: 1; color: var(--muted); font-size: 13px; }
+.ref button:hover { color: var(--text); }
+.ref.pinned .ref-pin { color: var(--accent); }
+.ref.gone { opacity: .55; text-decoration: line-through; }
+.msg.user .refs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.msg.user .ref { background: rgba(255, 255, 255, .12); border-color: rgba(255, 255, 255, .45); color: inherit; padding-right: 8px; }
+.msg.user .ref .ref-type { color: inherit; opacity: .7; }
+/* @-mention picker */
+.mention { position: absolute; left: 0; right: 48px; bottom: calc(100% + 4px); z-index: 60; max-height: 260px; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 9px; box-shadow: 0 8px 24px rgba(0,0,0,.15); padding: 4px; }
+.mention .opt { display: flex; gap: 8px; align-items: baseline; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.mention .opt.active, .mention .opt:hover { background: var(--chip); }
+.mention .opt .t { color: var(--muted); font-size: 11.5px; flex: none; min-width: 74px; }
+.mention .opt .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention .opt .i { color: var(--muted); font-size: 11px; margin-left: auto; flex: none; }
+.mention .none { padding: 6px 8px; color: var(--muted); font-size: 13px; }
+/* on the canvas: what is in the context (dashed) and the element under the pointer */
+.djs-element.ctx-ref .djs-visual > :first-child { stroke: #fc5d0d !important; stroke-dasharray: 5 3; }
+.djs-element.ctx-hover .djs-visual > :first-child { stroke: #fc5d0d !important; stroke-width: 3px !important; }
 textarea { flex: 1; resize: none; border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; max-height: 35vh; min-height: 40px; font: inherit; background: var(--bg); }
 textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .chat .row button { height: 40px; }

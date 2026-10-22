@@ -246,3 +246,10 @@ test('the deploy path and body field come from the config', async () => {
     applyConfig(saved);
   }
 });
+
+test('the system prompt tells the model how referenced elements are passed', async () => {
+  const { systemPrompt } = await studio.assistantStudio.config();
+  assert.match(systemPrompt, /\[Editor context\]/);
+  assert.match(systemPrompt, /@name/);
+  assert.match(systemPrompt, /use exactly those ids/);
+});
