@@ -45,3 +45,9 @@ test('the core bundle has no server API calls left', () => {
   assert.doesNotMatch(app, /\/api\//);
   assert.doesNotMatch(app, /EventSource/);
 });
+
+test('the downloadable local server is the current one (the zip is built from these files)', () => {
+  for (const f of ['server.js', 'package.json', 'README.md']) {
+    assert.equal(readFileSync(SITE + 'local-server/' + f, 'utf8'), readFileSync(new URL(`../local-server/${f}`, import.meta.url), 'utf8'), f);
+  }
+});
