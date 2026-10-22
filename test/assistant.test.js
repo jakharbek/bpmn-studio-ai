@@ -460,3 +460,13 @@ test('Claude API: a history whose reasoning no longer matches (400) is repaired 
   assert.deepEqual(requests[1].body.messages[1].content, [{ type: 'text', text: 'b' }], 'thinking stripped, text kept');
   assert.ok(events.some(e => e.type === 'note'));
 });
+
+test('local server refusals become instructions', async () => {
+  handler = (req, res) => {
+    res.writeHead(403, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'Origin https://x.io is not allowed: this server runs without a token' } }));
+  };
+  await assert.rejects(testConnection({ provider: 'local', baseUrl: `${base}/v1` }), /запущен без токена.*Скачайте сервер на этой странице/);
+  handler = (req, res) => { res.writeHead(401, { 'content-type': 'application/json' }); res.end('{"error":{"message":"bad token"}}'); };
+  await assert.rejects(testConnection({ provider: 'local', apiKey: 'x', baseUrl: `${base}/v1` }), /отклонил токен/);
+});

@@ -183,3 +183,27 @@ test('invalid configuration and an open network address without a token are refu
   r = await startFails({ BPMN_LOCAL_PORT: port, BPMN_LOCAL_TOKEN: '', BPMN_LOCAL_ALLOWED_ORIGINS: '*' });
   assert.equal(r.code, 1); assert.match(r.err, /needs a token/);
 });
+
+test('without a token: localhost studios only, and the refusal is readable for the page', async () => {
+  const port = await freePort();
+  const p = spawn(process.execPath, [new URL('../local-server/server.js', import.meta.url).pathname], {
+    env: { ...process.env, BPMN_LOCAL_PORT: String(port), BPMN_LOCAL_TOKEN: '', BPMN_LOCAL_ALLOWED_ORIGINS: '', CLAUDE_BIN: new URL('./fixtures/fake-claude.mjs', import.meta.url).pathname },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  try {
+    let out = '';
+    await new Promise((resolve, reject) => {
+      p.stdout.on('data', d => { out += d; if (out.includes('No token')) resolve(); });
+      p.on('exit', code => reject(new Error(`exited ${code}`)));
+    });
+    const pre = await fetch(`http://127.0.0.1:${port}/health`, { method: 'OPTIONS', headers: { origin: 'https://studio.example.io', 'access-control-request-method': 'GET' } });
+    assert.equal(pre.status, 204);
+    const res = await fetch(`http://127.0.0.1:${port}/health`, { headers: { origin: 'https://studio.example.io' } });
+    assert.equal(res.status, 403);
+    assert.equal(res.headers.get('access-control-allow-origin'), 'https://studio.example.io');
+    assert.match((await res.json()).error.message, /without a token/);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/health`, { headers: { origin: 'http://localhost:3333' } })).status, 200);
+  } finally {
+    p.kill('SIGTERM');
+  }
+});

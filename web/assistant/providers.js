@@ -77,6 +77,14 @@ async function httpError(res, s) {
     detail = body?.error?.message || body?.message || JSON.stringify(body).slice(0, 300);
   } catch { /* not JSON */ }
   const who = providerLabel(s);
+  if (s.provider === 'local' && res.status === 403 && /Origin .* is not allowed/.test(detail)) {
+    return new ProviderError('Локальный сервер запущен без токена и принимает запросы только от студии на localhost. ' +
+      'Скачайте сервер на этой странице (в его config.json есть токен) и запустите его вместо текущего.', { status: 403 });
+  }
+  if (s.provider === 'local' && res.status === 401) {
+    return new ProviderError('Локальный сервер отклонил токен. Нажмите «Скачать сервер (.zip)» и запустите новый архив, ' +
+      'или вставьте в поле «API-ключ» значение token из config.json запущенного сервера.', { status: 401 });
+  }
   if (res.status === 401 || res.status === 403) return new ProviderError(`${who}: доступ запрещён (${res.status}) — проверьте ключ/токен. ${detail}`, { status: res.status });
   if (res.status === 429) return new ProviderError(`${who}: превышен лимит запросов (429). ${detail}`, { status: 429, retryable: true });
   return new ProviderError(`${who}: HTTP ${res.status}. ${detail}`, { status: res.status, retryable: res.status >= 500 });

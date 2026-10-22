@@ -118,7 +118,10 @@ function isAllowedOrigin(origin) {
 }
 
 function checkRequest(req) {
-  if (!isAllowedOrigin(req.headers.origin)) throw new HttpError(403, `Origin ${req.headers.origin} is not allowed (config.json → allowedOrigins)`);
+  if (!isAllowedOrigin(req.headers.origin)) {
+    throw new HttpError(403, `Origin ${req.headers.origin} is not allowed: this server runs without a token and accepts only localhost studios. ` +
+      "Download the server from the studio page (its config.json has a token), or add the origin to allowedOrigins in config.json.");
+  }
   if (LOOPBACK_HOSTS.has(CFG.host) || CFG.host === "::1") {
     // DNS rebinding: a foreign hostname resolving to 127.0.0.1 must not reach us
     const host = String(req.headers.host || "").replace(/:\d+$/, "").toLowerCase();
@@ -138,9 +141,14 @@ function checkAuth(req) {
   if (!ok) throw new HttpError(401, "Missing or invalid token (Authorization: Bearer …)");
 }
 
+/**
+ * CORS headers for every browser origin. Safe: a request from an origin that is not allowed is still
+ * refused by checkRequest (403) before any handler runs — the headers only let the page read *why*,
+ * instead of an opaque "Failed to fetch".
+ */
 function applyCors(req, res) {
   const origin = req.headers.origin;
-  if (origin === undefined || !isAllowedOrigin(origin)) return;
+  if (origin === undefined) return;
   res.setHeader("Access-Control-Allow-Origin", origin);
   res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -570,7 +578,8 @@ function checkClaude() {
 const server = http.createServer(async (req, res) => {
   applyCors(req, res);
   if (req.method === "OPTIONS") {
-    res.writeHead(isAllowedOrigin(req.headers.origin) ? 204 : 403);
+    // the preflight always succeeds; the request itself is checked (origin, host, token)
+    res.writeHead(204);
     return res.end();
   }
   try {
@@ -607,6 +616,10 @@ server.listen(CFG.port, CFG.host, async () => {
   console.log(`  Claude Code: ${claudeStatus.available ? claudeStatus.version : "NOT AVAILABLE — " + claudeStatus.error}`);
   console.log(`  Allowed studio origins: ${ANY_ORIGIN ? "any (requests need the token)" : [...CFG.allowedOrigins].join(", ") || "(localhost only)"}`);
   console.log(`  Token: ${CFG.token ? "required" : "not set"}`);
+  if (!CFG.token) {
+    console.log("  ! No token: only studios on localhost can connect. For a studio on the internet (e.g. GitHub Pages)");
+    console.log("    download the server from that studio page: its config.json contains the token.");
+  }
   console.log("  In BPMN Studio: Ассистент → настройки → Local API → «Проверить соединение».");
 });
 
