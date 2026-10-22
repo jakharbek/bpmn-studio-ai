@@ -18,7 +18,7 @@ let server;
 
 before(async () => {
   server = spawn(process.execPath, [new URL('../local-server/server.js', import.meta.url).pathname], {
-    env: { ...process.env, BPMN_LOCAL_PORT: String(PORT), BPMN_LOCAL_TOKEN: TOKEN, BPMN_LOCAL_ALLOWED_ORIGINS: STUDIO,
+    env: { ...process.env, BPMN_LOCAL_PORT: String(PORT), BPMN_LOCAL_TOKEN: TOKEN, BPMN_LOCAL_ALLOWED_ORIGINS: STUDIO, BPMN_LOCAL_CONFIG: join(dir, 'config.json'),
       CLAUDE_BIN: new URL('./fixtures/fake-claude.mjs', import.meta.url).pathname, FAKE_CLAUDE_LOG: LOG },
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -162,7 +162,7 @@ test('at most maxConcurrent CLI runs at a time', async () => {
 
 const startFails = (env, cwdConfig) => new Promise(resolve => {
   const p = spawn(process.execPath, [new URL('../local-server/server.js', import.meta.url).pathname], {
-    env: { ...process.env, CLAUDE_BIN: 'false', ...env }, stdio: ['ignore', 'pipe', 'pipe']
+    env: { ...process.env, CLAUDE_BIN: 'false', BPMN_LOCAL_CONFIG: join(dir, 'none.json'), ...env }, stdio: ['ignore', 'pipe', 'pipe']
   });
   let err = '';
   p.stderr.on('data', d => { err += d; });
@@ -170,7 +170,7 @@ const startFails = (env, cwdConfig) => new Promise(resolve => {
   p.on('exit', code => { clearTimeout(t); resolve({ code, err }); });
 });
 
-test('invalid configuration and an open network address without a token are refused', async () => {
+test('invalid configuration is refused', async () => {
   const port = String(await freePort());
   let r = await startFails({ BPMN_LOCAL_PORT: 'abc' });
   assert.equal(r.code, 1); assert.match(r.err, /port/);
@@ -178,31 +178,33 @@ test('invalid configuration and an open network address without a token are refu
   assert.equal(r.code, 1); assert.match(r.err, /timeoutMs/);
   r = await startFails({ BPMN_LOCAL_PORT: port, BPMN_LOCAL_TOKEN: 'short' });
   assert.equal(r.code, 1); assert.match(r.err, /token/);
-  r = await startFails({ BPMN_LOCAL_PORT: port, BPMN_LOCAL_HOST: '0.0.0.0', BPMN_LOCAL_TOKEN: '' });
-  assert.equal(r.code, 1); assert.match(r.err, /token/);
-  r = await startFails({ BPMN_LOCAL_PORT: port, BPMN_LOCAL_TOKEN: '', BPMN_LOCAL_ALLOWED_ORIGINS: '*' });
-  assert.equal(r.code, 1); assert.match(r.err, /needs a token/);
+
 });
 
-test('without a token: localhost studios only, and the refusal is readable for the page', async () => {
+test('without a token one is created, saved to config.json (owner-only, other settings kept) and required', async () => {
   const port = await freePort();
+  const cfgFile = join(dir, 'gen-config.json');
+  (await import('node:fs')).writeFileSync(cfgFile, JSON.stringify({ defaultModel: 'sonnet' }));
   const p = spawn(process.execPath, [new URL('../local-server/server.js', import.meta.url).pathname], {
-    env: { ...process.env, BPMN_LOCAL_PORT: String(port), BPMN_LOCAL_TOKEN: '', BPMN_LOCAL_ALLOWED_ORIGINS: '', CLAUDE_BIN: new URL('./fixtures/fake-claude.mjs', import.meta.url).pathname },
+    env: { ...process.env, BPMN_LOCAL_PORT: String(port), BPMN_LOCAL_TOKEN: '', BPMN_LOCAL_CONFIG: cfgFile, CLAUDE_BIN: new URL('./fixtures/fake-claude.mjs', import.meta.url).pathname },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   try {
     let out = '';
     await new Promise((resolve, reject) => {
-      p.stdout.on('data', d => { out += d; if (out.includes('No token')) resolve(); });
+      p.stdout.on('data', d => { out += d; if (out.includes('«API-ключ»')) resolve(); });
       p.on('exit', code => reject(new Error(`exited ${code}`)));
     });
-    const pre = await fetch(`http://127.0.0.1:${port}/health`, { method: 'OPTIONS', headers: { origin: 'https://studio.example.io', 'access-control-request-method': 'GET' } });
-    assert.equal(pre.status, 204);
-    const res = await fetch(`http://127.0.0.1:${port}/health`, { headers: { origin: 'https://studio.example.io' } });
-    assert.equal(res.status, 403);
-    assert.equal(res.headers.get('access-control-allow-origin'), 'https://studio.example.io');
-    assert.match((await res.json()).error.message, /without a token/);
-    assert.equal((await fetch(`http://127.0.0.1:${port}/health`, { headers: { origin: 'http://localhost:3333' } })).status, 200);
+    const fs = await import('node:fs');
+    const saved = JSON.parse(fs.readFileSync(cfgFile, 'utf8'));
+    assert.match(saved.token, /^[0-9a-f]{48}$/);
+    assert.equal(saved.defaultModel, 'sonnet', 'other settings are kept');
+    assert.equal(fs.statSync(cfgFile).mode & 0o777, 0o600);
+    assert.ok(out.includes(saved.token), 'the token is shown in the server terminal');
+    // any studio address, but only with the token
+    const url = `http://127.0.0.1:${port}/health`;
+    assert.equal((await fetch(url, { headers: { origin: 'https://studio.example.io' } })).status, 401);
+    assert.equal((await fetch(url, { headers: { origin: 'https://studio.example.io', authorization: `Bearer ${saved.token}` } })).status, 200);
   } finally {
     p.kill('SIGTERM');
   }

@@ -24,15 +24,15 @@
 | Поле | По умолчанию | Описание |
 |---|---|---|
 | `port` | `8138` | Порт |
-| `host` | `127.0.0.1` | Адрес. Любой не-loopback адрес требует `token`, иначе сервер не запустится |
-| `token` | — | Если задан (не короче 16 символов), запросы должны идти с `Authorization: Bearer <token>` |
+| `host` | `127.0.0.1` | Адрес, на котором слушает сервер |
+| `token` | создаётся сам | Если токена нет (ни в `config.json`, ни в `BPMN_LOCAL_TOKEN`), сервер при запуске создаёт случайный токен, сохраняет его в `config.json` (права только для владельца, остальные настройки файла сохраняются) и печатает в терминале — вставьте его один раз в студии в поле «API-ключ». Запросы должны идти с `Authorization: Bearer <token>`; длина не меньше 16 символов |
 | `allowedOrigins` | `["*"]` в скачанном архиве | С токеном сервер принимает запросы с любого адреса студии (GitHub Pages, свой домен, localhost) — без токена их всё равно не выполнить. Без токена — только localhost и перечисленные адреса; `"*"` без токена не допускается |
 | `defaultModel` | `opus` | Модель Claude Code, если клиент её не указал (`opus`, `sonnet`, `haiku`) |
 | `timeoutMs` | `1800000` | Максимальная длительность одного ответа |
 | `maxConcurrent` | `2` | Сколько процессов `claude` одновременно; лишние запросы получают 429 |
 | `claudeBin` | `claude` | Путь к Claude Code CLI |
 
-Переменные окружения `BPMN_LOCAL_PORT`, `BPMN_LOCAL_HOST`, `BPMN_LOCAL_TOKEN`, `BPMN_LOCAL_ALLOWED_ORIGINS`, `BPMN_LOCAL_TIMEOUT_MS`, `BPMN_LOCAL_MAX_CONCURRENT`, `CLAUDE_BIN` переопределяют этот файл. Ошибки в конфиге (не JSON, неверный порт и т. п.) останавливают запуск с понятным сообщением.
+Переменные окружения `BPMN_LOCAL_CONFIG` (путь к конфигу вместо `config.json` рядом с `server.js`), `BPMN_LOCAL_PORT`, `BPMN_LOCAL_HOST`, `BPMN_LOCAL_TOKEN`, `BPMN_LOCAL_ALLOWED_ORIGINS`, `BPMN_LOCAL_TIMEOUT_MS`, `BPMN_LOCAL_MAX_CONCURRENT`, `CLAUDE_BIN` переопределяют этот файл. Ошибки в конфиге (не JSON, неверный порт и т. п.) останавливают запуск с понятным сообщением.
 
 ## API
 

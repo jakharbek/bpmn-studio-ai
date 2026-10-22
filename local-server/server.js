@@ -39,8 +39,28 @@ function fail(message) {
   process.exit(1);
 }
 
+// config.json next to server.js (BPMN_LOCAL_CONFIG: another path, used by the tests)
+const CONFIG_FILE = process.env.BPMN_LOCAL_CONFIG || path.join(__dirname, "config.json");
+let GENERATED_TOKEN = false;
+
+/**
+ * No token anywhere: create one and keep it in config.json (other settings there are kept), so the
+ * server always runs with a token and the studio needs it only once.
+ */
+function generateToken(cfg, file) {
+  const token = crypto.randomBytes(24).toString("hex");
+  try {
+    fs.writeFileSync(file, JSON.stringify({ ...cfg, token }, null, 2) + "\n", { mode: 0o600 });
+    fs.chmodSync(file, 0o600);
+  } catch (err) {
+    console.error(`config: could not save the new token to ${file} (${err.message}); it is valid until the server stops`);
+  }
+  GENERATED_TOKEN = true;
+  return token;
+}
+
 function loadConfig() {
-  const file = path.join(__dirname, "config.json");
+  const file = CONFIG_FILE;
   let cfg = {};
   if (fs.existsSync(file)) {
     try {
@@ -63,10 +83,9 @@ function loadConfig() {
     if (typeof value !== "string") fail(`${name} must be a string`);
     return value;
   };
-  const token = str("token", env.BPMN_LOCAL_TOKEN || cfg.token);
+  let token = str("token", env.BPMN_LOCAL_TOKEN || cfg.token);
   if (token !== null && token.length < 16) fail("token must be at least 16 characters");
-  const origins = [...list(cfg.allowedOrigins), ...list(env.BPMN_LOCAL_ALLOWED_ORIGINS)];
-  if (origins.includes("*") && !token) fail('allowedOrigins "*" needs a token: any website could use your Claude subscription otherwise');
+  if (token === null) token = generateToken(cfg, file);
   return {
     port: int("port", env.BPMN_LOCAL_PORT || cfg.port || 8138, 1, 65535),
     host: str("host", env.BPMN_LOCAL_HOST || cfg.host) || "127.0.0.1",
@@ -616,6 +635,11 @@ server.listen(CFG.port, CFG.host, async () => {
   console.log(`  Claude Code: ${claudeStatus.available ? claudeStatus.version : "NOT AVAILABLE — " + claudeStatus.error}`);
   console.log(`  Allowed studio origins: ${ANY_ORIGIN ? "any (requests need the token)" : [...CFG.allowedOrigins].join(", ") || "(localhost only)"}`);
   console.log(`  Token: ${CFG.token ? "required" : "not set"}`);
+  if (GENERATED_TOKEN) {
+    console.log(`  A new token was created and saved to ${CONFIG_FILE}:`);
+    console.log(`    ${CFG.token}`);
+    console.log("  Paste it once into BPMN Studio → Ассистент → настройки → Local API → «API-ключ».");
+  }
   if (!CFG.token) {
     console.log("  ! No token: only studios on localhost can connect. For a studio on the internet (e.g. GitHub Pages)");
     console.log("    download the server from that studio page: its config.json contains the token.");
