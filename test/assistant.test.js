@@ -470,3 +470,36 @@ test('local server refusals become instructions', async () => {
   handler = (req, res) => { res.writeHead(401, { 'content-type': 'application/json' }); res.end('{"error":{"message":"bad token"}}'); };
   await assert.rejects(testConnection({ provider: 'local', apiKey: 'x', baseUrl: `${base}/v1` }), /отклонил токен/);
 });
+
+test('optional Basic Auth: OpenAI-compatible (Authorization: Basic, also for the connection check) and Claude API (with x-api-key)', async () => {
+  const { basicAuthorization } = await import('../web/assistant/providers.js');
+  assert.equal(basicAuthorization({ basicUser: 'user', basicPass: 'secret' }), `Basic ${Buffer.from('user:secret').toString('base64')}`);
+  assert.equal(basicAuthorization({ basicUser: 'пользователь', basicPass: 'пароль' }), `Basic ${Buffer.from('пользователь:пароль', 'utf8').toString('base64')}`);
+  assert.equal(basicAuthorization({ basicUser: '' }), null);
+
+  requests.length = 0;
+  handler = (req, res) => {
+    if (req.url.endsWith('/models')) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{"data":[{"id":"m"}]}'); }
+    sse(res, [{ choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: 'stop' }] }, 'data: [DONE]\n\n']);
+  };
+  const basic = `Basic ${Buffer.from('user:secret').toString('base64')}`;
+  const settings = { provider: 'custom', apiKey: 'k', model: 'm', baseUrl: `${base}/v1`, basicUser: 'user', basicPass: 'secret' };
+  await testConnection(settings);
+  await runAssistant({ settings, history: [], text: 'x', studio: fakeStudio(), onEvent: () => {} });
+  assert.ok(requests.length >= 2);
+  for (const r of requests) assert.equal(r.headers.authorization, basic, r.url);
+
+  requests.length = 0;
+  const start = { type: 'message_start', message: { id: 'm', type: 'message', role: 'assistant', model: 'claude-opus-5-5', content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 } } };
+  const ev = (type, data) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+  handler = (req, res) => sse(res, [ev('message_start', start), ev('content_block_start', { index: 0, content_block: { type: 'text', text: '' } }),
+    ev('content_block_delta', { index: 0, delta: { type: 'text_delta', text: 'ok' } }), ev('content_block_stop', { index: 0 }),
+    ev('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } }), ev('message_stop', {})]);
+  await runAssistant({ settings: { provider: 'anthropic', apiKey: 'sk-test', model: 'claude-opus-5-5', baseUrl: base, basicUser: 'user', basicPass: 'secret' },
+    history: [], text: 'x', studio: fakeStudio(), onEvent: () => {} });
+  assert.equal(requests[0].headers['x-api-key'], 'sk-test');
+  assert.equal(requests[0].headers.authorization, basic);
+
+  handler = (req, res) => { res.writeHead(401, { 'content-type': 'application/json' }); res.end('{"error":{"message":"unauthorized"}}'); };
+  await assert.rejects(testConnection(settings), /логин и пароль Basic Auth/);
+});

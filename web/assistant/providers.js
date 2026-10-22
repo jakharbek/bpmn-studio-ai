@@ -55,6 +55,15 @@ export class ProviderError extends Error {
 
 const baseUrlOf = s => (s.baseUrl || PROVIDERS[s.provider].baseUrl || '').replace(/\/+$/, '');
 
+/** "Basic …" for the optional HTTP Basic Auth of a provider (user:password, UTF-8, RFC 7617), or null. */
+export function basicAuthorization(s) {
+  if (!s.basicUser) return null;
+  const bytes = new TextEncoder().encode(`${s.basicUser}:${s.basicPass || ''}`);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return `Basic ${btoa(bin)}`;
+}
+
 function openAiHeaders(s) {
   const h = { 'content-type': 'application/json' };
   // extra headers of a custom provider first, so they cannot replace the content type or auth
@@ -63,6 +72,9 @@ function openAiHeaders(s) {
     h['content-type'] = 'application/json';
   }
   if (s.apiKey) h.authorization = `Bearer ${s.apiKey}`;
+  // Basic Auth (a proxy in front of the service) takes the Authorization header
+  const basic = basicAuthorization(s);
+  if (basic) h.authorization = basic;
   if (s.provider === 'openrouter') {
     h['HTTP-Referer'] = globalThis.location?.origin || 'https://bpmn-studio.local';
     h['X-Title'] = 'BPMN Studio';
@@ -84,6 +96,9 @@ async function httpError(res, s) {
   if (s.provider === 'local' && res.status === 401) {
     return new ProviderError('Локальный сервер отклонил токен. Нажмите «Скачать сервер (.zip)» и запустите новый архив, ' +
       'или вставьте в поле «API-ключ» значение token из config.json запущенного сервера.', { status: 401 });
+  }
+  if (res.status === 401 && s.basicUser) {
+    return new ProviderError(`${who}: доступ запрещён (401) — проверьте логин и пароль Basic Auth в «Дополнительно».`, { status: 401 });
   }
   if (res.status === 401 || res.status === 403) return new ProviderError(`${who}: доступ запрещён (${res.status}) — проверьте ключ/токен. ${detail}`, { status: res.status });
   if (res.status === 429) return new ProviderError(`${who}: превышен лимит запросов (429). ${detail}`, { status: 429, retryable: true });
@@ -296,6 +311,8 @@ function anthropicClient(s, fetchImpl) {
     dangerouslyAllowBrowser: true, // the key is the user's own and never leaves their browser except to Anthropic
     ...(s.baseUrl ? { baseURL: s.baseUrl } : {}),
     ...(fetchImpl !== fetch ? { fetch: fetchImpl } : {}),
+    // the key goes in x-api-key, so Basic Auth of a proxy can use Authorization
+    ...(basicAuthorization(s) ? { defaultHeaders: { Authorization: basicAuthorization(s) } } : {}),
     maxRetries: 2
   });
 }

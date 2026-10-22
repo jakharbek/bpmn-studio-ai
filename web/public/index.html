@@ -153,6 +153,15 @@
         <label for="as-base">Base URL (прокси или свой адрес)</label>
         <input id="as-base" spellcheck="false">
       </div>
+      <div id="as-basic-row" class="as-field">
+        <label for="as-basic-user">Basic Auth — если сервер закрыт логином и паролем</label>
+        <div class="as-row as-basic">
+          <input id="as-basic-user" placeholder="логин" autocomplete="off" spellcheck="false" aria-label="Логин Basic Auth">
+          <input id="as-basic-pass" type="password" placeholder="пароль" autocomplete="new-password" spellcheck="false" aria-label="Пароль Basic Auth">
+          <button type="button" id="as-basic-toggle" title="Показать/скрыть пароль" aria-label="Показать или скрыть пароль">👁</button>
+        </div>
+        <div class="as-help" id="as-basic-help">Обычно не нужно. Логин и пароль хранятся только в этом браузере и отправляются только этому сервису.</div>
+      </div>
       <div id="as-headers-row" class="as-field">
         <label for="as-headers">Дополнительные заголовки (JSON)</label>
         <textarea id="as-headers" rows="2" spellcheck="false" placeholder='{"X-Workspace": "..."}'></textarea>

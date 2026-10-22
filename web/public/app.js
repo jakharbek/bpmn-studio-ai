@@ -509,7 +509,10 @@ function activeSettings(s = assistantSettings) {
     baseUrl: p.baseUrl || '',
     effort: p.effort || 'default',
     name: p.name || '',
-    headers: p.headers || null
+    headers: p.headers || null,
+    // optional HTTP Basic Auth in front of the provider (a proxy); the local server has its own token
+    basicUser: s.provider === 'local' ? '' : p.basicUser || '',
+    basicPass: s.provider === 'local' ? '' : p.basicPass || ''
   };
 }
 
@@ -569,6 +572,15 @@ function renderSettings() {
   $('as-custom').hidden = !custom;
   $('as-base-row').hidden = custom; // custom has its own, required Base URL field
   $('as-headers-row').hidden = !custom;
+  $('as-basic-row').hidden = draft.provider === 'local';
+  $('as-basic-user').value = prof.basicUser || '';
+  $('as-basic-pass').value = prof.basicPass || '';
+  $('as-basic-pass').type = 'password';
+  $('as-basic-help').textContent = meta.kind === 'openai'
+    ? 'Обычно не нужно. С Basic Auth заголовок Authorization занят логином и паролем, поэтому API-ключ в нём не отправляется. Хранится только в этом браузере.'
+    : 'Обычно не нужно. Логин и пароль хранятся только в этом браузере и отправляются только этому сервису.';
+  // a configured Basic Auth must be visible, not hidden in a folded section
+  if (prof.basicUser) $('as-advanced').open = true;
   if (custom) {
     $('as-preset').value = prof.preset || 'other';
     $('as-name').value = prof.name || '';
@@ -612,6 +624,15 @@ function readForm() {
     }
   }
   if (meta.needsKey || draft.provider === 'custom' || draft.provider === 'local') prof.apiKey = $('as-key').value.trim();
+  if (draft.provider !== 'local') {
+    const user = $('as-basic-user').value.trim();
+    const pass = $('as-basic-pass').value;
+    // RFC 7617: the user id cannot contain a colon (it separates user and password)
+    if (user.includes(':')) throw new Error('Логин Basic Auth не может содержать двоеточие');
+    if (!user && pass) throw new Error('Для Basic Auth укажите логин');
+    prof.basicUser = user;
+    prof.basicPass = user ? pass : '';
+  }
   prof.model = $('as-model').value.trim();
   prof.effort = $('as-effort').value;
   if (draft.provider === 'custom') {
@@ -654,6 +675,7 @@ $('as-preset').onchange = () => {
   setStatus('Укажите ключ (если нужен) и нажмите «Проверить соединение», чтобы загрузить список моделей.', 'info');
 };
 $('as-key-toggle').onclick = () => { $('as-key').type = $('as-key').type === 'password' ? 'text' : 'password'; };
+$('as-basic-toggle').onclick = () => { $('as-basic-pass').type = $('as-basic-pass').type === 'password' ? 'text' : 'password'; };
 
 $('as-test').onclick = async () => {
   try { readForm(); } catch (err) { return setStatus(`✗ ${err.message}`, 'err'); }

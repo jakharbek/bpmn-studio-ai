@@ -176,6 +176,8 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .as-field { display: flex; flex-direction: column; gap: 5px; }
 .as-field label, .as-field summary { font-size: 13px; font-weight: 600; }
 .as-field input, .as-field select { border: 1px solid var(--border); border-radius: 7px; padding: 7px 9px; background: var(--bg); width: 100%; }
+.as-basic input { min-width: 0; }
+.as-help { font-size: 12px; color: var(--muted); }
 .as-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .as-row input { flex: 1; }
 .as-row label input { width: 90px; margin-left: 6px; border: 1px solid var(--border); border-radius: 7px; padding: 5px 7px; }
