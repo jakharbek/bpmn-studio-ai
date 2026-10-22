@@ -10,3 +10,5 @@ backup/
 # local tooling of this machine
 .claude/
 .idea/
+# the local server's own settings (holds the token)
+local-server/config.json
