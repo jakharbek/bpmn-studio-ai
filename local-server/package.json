@@ -1,0 +1,13 @@
+{
+  "name": "bpmn-studio-local-assistant",
+  "version": "1.0.0",
+  "description": "Local OpenAI-compatible assistant server for BPMN Studio, answering with the Claude Code CLI (your Claude subscription, no API key)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

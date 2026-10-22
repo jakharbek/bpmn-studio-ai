@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BPMN Studio</title>
+<link rel="stylesheet" data-css="modern" href="vendor/assets/camunda-cloud-modeler.css">
+<link rel="stylesheet" data-css="legacy" href="legacy/bpmn-js/diagram-js.css" disabled>
+<link rel="stylesheet" data-css="legacy" href="legacy/bpmn-js/bpmn-font/css/bpmn-embedded.css" disabled>
+<link rel="stylesheet" data-css="legacy" href="legacy/properties-panel/bpmn-js-properties-panel.css" disabled>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header>
+  <span class="brand">BPMN Studio</span>
+  <select id="files" title="Диаграмма"></select>
+  <button id="new" type="button">+ Новая</button>
+  <button id="open-file" type="button" title="Открыть .bpmn или .zip с компьютера (или перетащите файл на холст)">Открыть файл</button>
+  <input id="file-input" type="file" accept=".bpmn,.xml,.zip" multiple hidden>
+  <div class="menu">
+    <button id="download" type="button">Скачать ▾</button>
+    <div class="menu-list" id="download-menu" hidden>
+      <button type="button" data-dl="bpmn">BPMN (.bpmn)</button>
+      <button type="button" data-dl="svg">Изображение (.svg)</button>
+      <button type="button" data-dl="all">Все схемы (.zip) — резервная копия</button>
+    </div>
+  </div>
+  <button id="rename" type="button" title="Переименовать диаграмму">Переименовать</button>
+  <button id="delete" type="button" title="Удалить диаграмму из этого браузера">Удалить</button>
+  <button id="toggle-props" type="button" title="Панель свойств">Свойства</button>
+  <div class="menu">
+    <button id="deploy" type="button" class="primary">Отправить схему ▾</button>
+    <div class="menu-list" id="deploy-menu" hidden></div>
+  </div>
+  <span class="platform" id="platform"></span>
+  <span class="spacer"></span>
+  <span class="save-state" id="save-state" role="status" aria-live="polite"></span>
+</header>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<div class="drop-hint" id="drop-hint" hidden>Отпустите .bpmn или .zip, чтобы открыть</div>
+<div class="banner" id="banner" hidden>
+  <span id="banner-text"></span>
+  <button type="button" id="banner-load" class="primary">Загрузить с диска</button>
+  <button type="button" id="banner-keep">Оставить мою версию</button>
+</div>
+
+<div class="app">
+  <section class="editor">
+    <div class="work">
+      <div id="canvas"></div>
+      <div class="placeholder" id="placeholder" hidden><div><b>Диаграмм пока нет</b>Нажмите «+ Новая» или опишите процесс в чате справа.<small>Схемы хранятся только в этом браузере. Резервная копия: Скачать ▾ → Все схемы (.zip).</small></div></div>
+      <aside id="props"></aside>
+    </div>
+    <div class="problems" id="problems">
+      <div class="problems-head" id="problems-head" role="button" tabindex="0" aria-label="Проблемы: показать или скрыть список"><span>Проблемы</span><span id="problems-summary"></span></div>
+      <ul id="problems-list" hidden></ul>
+    </div>
+  </section>
+
+  <section class="chat">
+    <div class="chat-head">
+      <span class="dot" id="dot"></span>
+      <b>Ассистент</b>
+      <button id="assistant-chip" class="chip" type="button" title="Настройки ассистента"></button>
+      <button id="assistant-gear" type="button" title="Настройки ассистента" aria-label="Настройки ассистента">⚙</button>
+      <button id="new-chat" type="button">Новый чат</button>
+    </div>
+    <div id="log"></div>
+    <form id="form">
+      <div class="ctx-chip" id="ctx-chip"></div>
+      <div class="row">
+        <textarea id="input" rows="1" placeholder="Опишите процесс или что изменить…"></textarea>
+        <button id="send" type="submit" class="primary" aria-label="Отправить сообщение" title="Отправить (Enter)">➤</button>
+        <button id="stop" type="button" hidden>Стоп</button>
+      </div>
+    </form>
+  </section>
+</div>
+
+<dialog id="assistant-settings" class="as-dialog">
+  <form method="dialog" class="as-form">
+    <h2>Настройки ассистента</h2>
+    <fieldset class="as-providers">
+      <legend>Через что работает ассистент</legend>
+      <label class="as-card"><input type="radio" name="as-provider" value="openai"><b>OpenAI API</b><span>по API-ключу OpenAI</span></label>
+      <label class="as-card"><input type="radio" name="as-provider" value="anthropic"><b>Claude API</b><span>по API-ключу Anthropic</span></label>
+      <label class="as-card"><input type="radio" name="as-provider" value="openrouter"><b>OpenRouter API</b><span>сотни моделей по одному ключу</span></label>
+      <label class="as-card"><input type="radio" name="as-provider" value="local"><b>Local API</b><span>Claude Code на вашем компьютере, по подписке</span></label>
+      <label class="as-card"><input type="radio" name="as-provider" value="custom"><b>Custom LLM Provider</b><span>Qwen, DeepSeek, Ollama — любой OpenAI-совместимый API</span></label>
+    </fieldset>
+
+    <div id="as-custom" class="as-custom">
+      <div class="as-field">
+        <label for="as-preset">Шаблон</label>
+        <select id="as-preset"></select>
+        <div class="as-hint" id="as-preset-hint"></div>
+      </div>
+      <div class="as-field">
+        <label for="as-name">Название</label>
+        <input id="as-name" placeholder="Например: Qwen" spellcheck="false">
+      </div>
+      <div class="as-field">
+        <label for="as-custom-base">Base URL</label>
+        <input id="as-custom-base" placeholder="https://…/v1" spellcheck="false" inputmode="url">
+        <div class="as-hint">Адрес OpenAI-совместимого API: студия обращается к <code>{Base URL}/chat/completions</code> и <code>{Base URL}/models</code>. Модель должна поддерживать вызов функций (tools).</div>
+      </div>
+    </div>
+
+    <div id="as-local" class="as-local">
+      <ol>
+        <li>Установите <a href="https://code.claude.com" target="_blank" rel="noopener">Claude Code</a> и войдите: <code>claude login</code>. Нужен Node.js 18+.</li>
+        <li>Скачайте локальный сервер — он уже настроен на эту студию и ваш личный токен.
+          <div class="as-row">
+            <label>Порт <input id="as-port" type="number" min="1024" max="65535" value="8138"></label>
+            <button type="button" id="as-download" class="primary">Скачать сервер (.zip)</button>
+          </div>
+        </li>
+        <li>Распакуйте и запустите: <code>node server.js</code> (или <code>start.cmd</code> / <code>start.sh</code>).</li>
+        <li>Нажмите «Проверить соединение».</li>
+      </ol>
+      <div class="as-hint">Токен: <code id="as-token"></code> <button type="button" id="as-new-token" class="link">новый токен</button></div>
+    </div>
+
+    <div class="as-field" id="as-key-row">
+      <label for="as-key">API-ключ</label>
+      <div class="as-row"><input id="as-key" type="password" autocomplete="off" spellcheck="false"><button type="button" id="as-key-toggle" title="Показать/скрыть">👁</button></div>
+      <div class="as-hint"><span id="as-key-help"></span>. Ключ хранится только в этом браузере и отправляется напрямую провайдеру, не на сервер студии.</div>
+    </div>
+    <div class="as-field">
+      <label for="as-model">Модель</label>
+      <input id="as-model" list="as-models" autocomplete="off" spellcheck="false">
+      <datalist id="as-models"></datalist>
+    </div>
+    <div class="as-field" id="as-effort-row">
+      <label for="as-effort">Усилие (effort)</label>
+      <select id="as-effort">
+        <option value="default">по умолчанию модели</option>
+        <option value="low">low — быстрее, дешевле</option>
+        <option value="medium">medium</option>
+        <option value="high">high</option>
+        <option value="xhigh">xhigh</option>
+        <option value="max">max — тщательнее, дороже</option>
+      </select>
+    </div>
+    <details class="as-field" id="as-advanced">
+      <summary>Дополнительно</summary>
+      <div id="as-base-row" class="as-field">
+        <label for="as-base">Base URL (прокси или свой адрес)</label>
+        <input id="as-base" spellcheck="false">
+      </div>
+      <div id="as-headers-row" class="as-field">
+        <label for="as-headers">Дополнительные заголовки (JSON)</label>
+        <textarea id="as-headers" rows="2" spellcheck="false" placeholder='{"X-Workspace": "..."}'></textarea>
+      </div>
+    </details>
+
+    <div id="as-status" class="as-status" role="status"></div>
+    <div class="as-actions">
+      <button type="button" id="as-test">Проверить соединение</button>
+      <span class="spacer"></span>
+      <button type="button" id="as-cancel">Отмена</button>
+      <button type="submit" id="as-save" class="primary">Сохранить</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="core.js"></script>
+<script src="vendor/marked.js"></script>
+<script src="vendor/purify.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

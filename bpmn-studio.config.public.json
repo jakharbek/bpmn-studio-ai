@@ -1,0 +1,10 @@
+{
+  "defaultPlatform": "camunda7",
+  "camunda7Version": "7.24.0",
+  "camunda7Editor": "legacy",
+  "deploy": {
+    "path": "/api/bpmn/deploy",
+    "field": "bpmnBase64",
+    "targets": {}
+  }
+}

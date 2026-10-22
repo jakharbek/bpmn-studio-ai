@@ -1,0 +1,69 @@
+# Build BPMN Studio and publish it on GitHub Pages.
+# Settings → Pages → Build and deployment → Source: "GitHub Actions".
+# The published config is bpmn-studio.config.public.json (no internal servers).
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# one deployment at a time; a newer push replaces a queued one
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/legacy/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm --prefix web/legacy ci --ignore-scripts
+
+      - name: Build the site (public config)
+        run: npm run build
+        env:
+          STUDIO_CONFIG: bpmn-studio.config.public.json
+
+      - name: Check that no internal addresses are published
+        run: |
+          if grep -rEn '(^|[^0-9])(10|172\.(1[6-9]|2[0-9]|3[01])|192\.168)\.[0-9]+\.[0-9]+' dist/site/bpmn-studio.config.json; then
+            echo "::error::dist/site/bpmn-studio.config.json contains a private network address"
+            exit 1
+          fi
+
+      - name: Test
+        run: npm test
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

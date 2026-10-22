@@ -1,0 +1,12 @@
+node_modules/
+web/legacy/node_modules/
+dist/
+web/public/legacy/
+.run/
+# private: internal deploy servers (the public build uses bpmn-studio.config.public.json)
+bpmn-studio.config.json
+# private: the user's diagrams
+backup/
+# local tooling of this machine
+.claude/
+.idea/
